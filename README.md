@@ -14,7 +14,8 @@ Model si sám rozdělí práci: vyhledá nabídky, otevře stránku produktu, zk
 |:--|:--|
 | `main.py` | Hlavní logika: smyčka s LLM a spouštění nástrojů |
 | `tools.py` | Implementace nástrojů, jejich validace a schémata pro LLM (oddělené od hlavní logiky) |
-| `test_queries.py` | 5 testovacích dotazů s automatickou kontrolou, které nástroje se použily |
+| `tests/` | Automatické testy (`pytest`), běží bez internetu a bez klíčů |
+| `test_queries.py` | 5 ukázkových dotazů proti skutečnému LLM, s kontrolou, které nástroje se použily |
 | `try_tool.py` | Pomocný skript: zavolá jeden nástroj ručně, bez LLM |
 | `check_connection.py` | Pomocný skript: ověří, že klíč `OPENAI_API_KEY` funguje |
 | `pyproject.toml` | Seznam závislostí |
@@ -48,6 +49,7 @@ Potřebuješ Python 3.12+ a [uv](https://docs.astral.sh/uv/).
 Další příkazy:
 
 ```bash
+uv run pytest               # automatické testy (rychlé, bez internetu a bez klíčů)
 uv run test_queries.py      # všech 5 testovacích dotazů
 uv run test_queries.py 4    # jen dotaz číslo 4
 uv run try_tool.py convert_currency '{"amount": 100, "from_currency": "EUR", "to_currency": "CZK"}'
@@ -91,9 +93,18 @@ Každý krok se vypisuje do konzole (`[step N] -> nástroj(argumenty)` a `[step 
 - Selhání samotného volání OpenAI (špatný klíč, překročený limit, výpadek sítě, vypršený čas) se vypíše jako srozumitelná hláška. Krátké výpadky OpenAI knihovna sama zopakuje (až 3×).
 - Smyčka má limit 10 kol. V posledním kole se nástroje vypnou a LLM musí odpovědět s tím, co našel, a říct, co neověřil.
 
+## Automatické testy
+
+`uv run pytest` spustí 35 testů za zlomek sekundy. Nepotřebují internet ani API klíče, protože HTTP volání i OpenAI jsou nahrazené falešnými.
+
+- **`tests/test_tools.py`** (nástroje): validace argumentů, chybové stavy (neplatný JSON, neznámý nástroj, chybějící klíč, 404, výpadek sítě), zkracování výstupu a tvar schémat pro LLM.
+- **`tests/test_main.py`** (smyčka): odpověď bez nástroje, návrat výsledku nástroje do LLM, chyba nástroje, **souběžné** spuštění více nástrojů se zachováním `tool_call_id`, na sebe navazující kola, vynucená odpověď v posledním kole a převod chyb OpenAI na srozumitelné hlášky. LLM zde nahrazuje předem připravený scénář odpovědí.
+
+Pro kontrolu jsem do kódu úmyslně zanesl tři chyby (nástroje po jednom místo souběžně, poslední kolo nevypne nástroje, odstraněná validace částky) a každou chytil právě ten test, který ji má hlídat.
+
 ## Testovací dotazy a očekávané chování
 
-Spouštějí se pomocí `uv run test_queries.py`. Protože LLM není deterministický, test kontroluje jen to, **které nástroje se použily**, ne přesný text odpovědi.
+Ukázkové dotazy proti skutečnému LLM se spouštějí pomocí `uv run test_queries.py`. Protože LLM není deterministický, test kontroluje jen to, **které nástroje se použily**, ne přesný text odpovědi.
 
 | # | Scénář | Dotaz | Očekávané chování |
 |:--|:--|:--|:--|
@@ -118,6 +129,7 @@ Dotaz s paralelním voláním: „Kolik je 100 EUR, 100 GBP, 100 USD a 100 CHF v
 
 ## Implementované bonusy
 
+- **Automatické testy** (`pytest`, 35 testů bez internetu)
 - Validace dat přes **Pydantic**
 - **Logování** jednotlivých kroků do konzole
 - **Paralelní volání** nezávislých nástrojů

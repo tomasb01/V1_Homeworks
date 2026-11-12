@@ -10,3 +10,12 @@ dependencies = [
     "python-dotenv>=1.2.3",
     "requests>=2.34.2",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]  # test_queries.py is a live demo with real API calls, not a unit test
+pythonpath = ["."]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
