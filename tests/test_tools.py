@@ -145,6 +145,67 @@ def test_web_search_shapes_the_result(monkeypatch):
     assert result["images"] == [f"https://img.example/{i}.jpg" for i in range(5)]  # only 5 plain URLs
 
 
+REQUIREMENTS = ["The product is black", "The offer is for new goods"]
+
+
+def tavily_results(count: int) -> dict:
+    return {"results": [{"title": f"offer {i}", "url": f"https://shop.example/{i}", "content": "text"} for i in range(count)]}
+
+
+def test_web_search_without_jev_ignores_requirements_and_says_so(monkeypatch):
+    monkeypatch.setenv("TAVILY_API_KEY", "secret")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    sent = {}
+
+    def fake_post(url, headers, json, timeout):
+        sent.update(json)
+        return FakeResponse(body=tavily_results(5))
+
+    monkeypatch.setattr(tools.requests, "post", fake_post)
+    result = call("web_search", query="apple m5", requirements=REQUIREMENTS)
+
+    assert sent["max_results"] == 5  # no reason to fetch more candidates
+    assert len(result["results"]) == 5 and "match" not in result["results"][0]
+    assert "Jev filter is not configured" in result["note"]
+
+
+def test_web_search_with_jev_fetches_more_and_returns_only_the_best(monkeypatch):
+    monkeypatch.setenv("TAVILY_API_KEY", "secret")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "secret")
+    sent = {}
+
+    def fake_post(url, headers, json, timeout):
+        if "tavily" in url:
+            sent.update(json)
+            return FakeResponse(body=tavily_results(10))
+        # Jev: the higher the offer number, the better it matches
+        met = int(json["state"]["title"].split()[-1]) / 10
+        probabilities = {"met": met, "contradicted": 1 - met, "not_mentioned": 0.0}
+        answers = {f"r{i}": {"probabilities": probabilities} for i in range(len(json["questions"]))}
+        return FakeResponse(body={"answers": answers})
+
+    monkeypatch.setattr(tools.requests, "post", fake_post)
+    result = call("web_search", query="apple m5", max_results=3, requirements=REQUIREMENTS)
+
+    assert sent["max_results"] == tools.JEV_CANDIDATES
+    assert [r["title"] for r in result["results"]] == ["offer 9", "offer 8", "offer 7"]
+    assert result["results"][0]["match"] == 0.9
+    assert "note" not in result
+
+
+@pytest.mark.parametrize(
+    "requirements",
+    [["a"], [f"requirement number {i}" for i in range(7)], []],
+    ids=["too short", "more than 6", "empty list is fine"],
+)
+def test_web_search_validates_requirements(monkeypatch, requirements):
+    monkeypatch.setenv("TAVILY_API_KEY", "secret")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setattr(tools.requests, "post", lambda *a, **k: FakeResponse(body=tavily_results(2)))
+    result = call("web_search", query="apple m5", requirements=requirements)
+    assert ("error" in result) == (requirements != [])
+
+
 def test_web_search_reports_tavily_errors(monkeypatch):
     monkeypatch.setenv("TAVILY_API_KEY", "secret")
     monkeypatch.setattr(tools.requests, "post", lambda *a, **k: FakeResponse(status_code=401, text="bad key"))

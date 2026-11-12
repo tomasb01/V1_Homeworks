@@ -2,10 +2,13 @@
 
 import json
 import os
+from typing import Annotated
 
 import requests
 from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+
+import jev_filter
 
 
 # ---------- convert_currency ----------
@@ -63,6 +66,17 @@ class WebSearchArgs(BaseModel):
         description="Optional: boost results from this country. Lowercase English name, e.g. 'germany', 'united kingdom'.",
     )
     max_results: int = Field(default=5, ge=1, le=10, description="How many results to return (1-10).")
+    requirements: list[Annotated[str, Field(min_length=3, max_length=150)]] | None = Field(
+        default=None,
+        max_length=6,
+        description="Optional: short checkable statements the wanted result should satisfy, e.g. "
+        "['The product is black', 'The chip is Apple M5', 'The offer is for new goods', 'The shop is in Germany']. "
+        "If given, the results are ranked by how well they match and only the best are returned, each with "
+        "'match' (0-1), 'contradicts' and 'not_confirmed' (requirements to check further on the page).",
+    )
+
+
+JEV_CANDIDATES = 10  # with requirements we fetch this many results and keep the best max_results
 
 
 def web_search(args: WebSearchArgs) -> dict:
@@ -70,9 +84,10 @@ def web_search(args: WebSearchArgs) -> dict:
     if not api_key:
         raise RuntimeError("TAVILY_API_KEY is not set.")
 
+    use_jev = bool(args.requirements) and jev_filter.is_available()
     payload = {
         "query": args.query,
-        "max_results": args.max_results,
+        "max_results": JEV_CANDIDATES if use_jev else args.max_results,
         "include_images": True,
     }
     if args.country:
@@ -92,14 +107,17 @@ def web_search(args: WebSearchArgs) -> dict:
     # Only the URLs go back to the LLM; check_image looks at the actual image.
     images = [img["url"] if isinstance(img, dict) else img for img in body.get("images", [])[:5]]
 
-    return {
-        "query": args.query,
-        "results": [
-            {"title": r["title"], "url": r["url"], "content": r["content"][:500]}  # keep token usage small
-            for r in body.get("results", [])
-        ],
-        "images": images,
-    }
+    results = [
+        {"title": r["title"], "url": r["url"], "content": r["content"][:500]}  # keep token usage small
+        for r in body.get("results", [])
+    ]
+    if use_jev:
+        results = jev_filter.rank_results(results, args.requirements, top_n=args.max_results)
+
+    output = {"query": args.query, "results": results, "images": images}
+    if args.requirements and not use_jev:
+        output["note"] = "requirements were not used for ranking: the Jev filter is not configured."
+    return output
 
 
 # ---------- read_page ----------

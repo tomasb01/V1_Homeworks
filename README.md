@@ -15,6 +15,7 @@ Model si sám rozdělí práci: vyhledá nabídky, otevře stránku produktu, zk
 | `main.py` | Hlavní logika: smyčka s LLM a spouštění nástrojů |
 | `tools.py` | Implementace nástrojů, jejich validace a schémata pro LLM (oddělené od hlavní logiky) |
 | `tests/` | Automatické testy (`pytest`), běží bez internetu a bez klíčů |
+| `jev_filter.py` | Volitelný filtr: model Jev seřadí výsledky hledání podle požadavků (viz níže) |
 | `test_queries.py` | 5 ukázkových dotazů proti skutečnému LLM, s kontrolou, které nástroje se použily |
 | `try_tool.py` | Pomocný skript: zavolá jeden nástroj ručně, bez LLM |
 | `check_connection.py` | Pomocný skript: ověří, že klíč `OPENAI_API_KEY` funguje |
@@ -37,6 +38,7 @@ Potřebuješ Python 3.12+ a [uv](https://docs.astral.sh/uv/).
    |:--|:--|:--|
    | `OPENAI_API_KEY` | https://platform.openai.com/api-keys | ano |
    | `TAVILY_API_KEY` | https://tavily.com (vyhledávání na webu) | ano |
+   | `OPENROUTER_API_KEY` | https://openrouter.ai/keys (zapne filtr Jev, vyžaduje dobitý kredit) | ne |
    | `OPENAI_MODEL` | název modelu s podporou nástrojů a obrázků, výchozí `gpt-6-luna` | ne |
 
    Soubor `.env` je v `.gitignore` a do repozitáře se nikdy nenahrává.
@@ -80,10 +82,24 @@ Každý krok se vypisuje do konzole (`[step N] -> nástroj(argumenty)` a `[step 
 
 | Nástroj | Co dělá | Argumenty | Externí služba |
 |:--|:--|:--|:--|
-| `web_search` | Hledání na webu, vrací výsledky (název, URL, úryvek) a URL obrázků | `query`, volitelně `country`, `max_results` (1–10) | Tavily Search |
+| `web_search` | Hledání na webu, vrací výsledky (název, URL, úryvek) a URL obrázků | `query`, volitelně `country`, `max_results` (1–10), `requirements` (viz Jev filtr) | Tavily Search, volitelně Jev přes OpenRouter |
 | `read_page` | Otevře stránku a vrátí jen části relevantní k dotazu (např. cenu konkrétní varianty) a obrázky ze stránky | `url`, `query` | Tavily Extract |
 | `check_image` | Pošle obrázek z URL vision modelu a odpoví na otázku o něm (např. barva produktu) | `image_url`, `question` | OpenAI (vision) |
 | `convert_currency` | Převod částky podle aktuálního kurzu | `amount` (> 0), `from_currency`, `to_currency` | Frankfurter (kurzy ECB, bez klíče) |
+
+### Volitelný filtr Jev (rychlé řazení výsledků před LLM)
+
+[Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev) je model od TypeSafe AI, který **nepíše text, ale rozhoduje**: na zadané otázky vrací pravděpodobnosti, rychle (stovky ms) a levně. Hodí se tedy na hrubé třídění, které nemusí dělat drahý LLM.
+
+Když LLM volá `web_search` s parametrem `requirements` (krátká ověřitelná tvrzení odvozená z dotazu, např. „Produkt je černý“, „Obchod je v Německu“), proběhne:
+
+1. Tavily vrátí až 10 kandidátů.
+2. Pro každý kandidát se souběžně zavolá Jev, který ke každému požadavku vybere jednu ze tří možností: **splněno**, **popřeno** (text říká opak) nebo **neuvedeno** (text o tom mlčí). Rozlišení „popřeno“ a „neuvedeno“ je důležité, protože úryvek často o vlastnosti (např. nové vs. repasované zboží) prostě nemluví.
+3. Skóre výsledku je průměr přes požadavky (neuvedeno = půl bodu). LLM dostane jen nejlepší výsledky, každý se skóre `match` a seznamy `contradicts` a `not_confirmed`, tedy co ještě ověřit na stránce nástrojem `read_page`.
+
+Jev ohodnotí kolem sedmi výsledků zhruba za půl sekundy. Filtr je **volitelný**: bez `OPENROUTER_API_KEY`, nebo když Jev selže, se `web_search` chová jako dřív a výsledek jen obsahuje poznámku, že požadavky nebyly použity. Výsledek, který Jev nestihl ohodnotit, se nezahodí, ale zařadí na konec.
+
+Omezení: Jev posuzuje jen krátký úryvek a nevidí celou stránku. Na jemné rozdíly je citlivý na formulaci požadavku: u vágního „čip je Apple M5“ dostal model s čipem M5 **Pro** stejné skóre jako M5, u přesného „základní M5, ne M5 Pro nebo Max“ ho správně vyřadil. Systémový prompt proto LLM vede k přesným formulacím.
 
 ### Validace a chyby
 
@@ -95,7 +111,7 @@ Každý krok se vypisuje do konzole (`[step N] -> nástroj(argumenty)` a `[step 
 
 ## Automatické testy
 
-`uv run pytest` spustí 35 testů za zlomek sekundy. Nepotřebují internet ani API klíče, protože HTTP volání i OpenAI jsou nahrazené falešnými.
+`uv run pytest` spustí 47 testů za zlomek sekundy. Nepotřebují internet ani API klíče, protože HTTP volání i OpenAI jsou nahrazené falešnými.
 
 - **`tests/test_tools.py`** (nástroje): validace argumentů, chybové stavy (neplatný JSON, neznámý nástroj, chybějící klíč, 404, výpadek sítě), zkracování výstupu a tvar schémat pro LLM.
 - **`tests/test_main.py`** (smyčka): odpověď bez nástroje, návrat výsledku nástroje do LLM, chyba nástroje, **souběžné** spuštění více nástrojů se zachováním `tool_call_id`, na sebe navazující kola, vynucená odpověď v posledním kole a převod chyb OpenAI na srozumitelné hlášky. LLM zde nahrazuje předem připravený scénář odpovědí.
@@ -129,7 +145,8 @@ Dotaz s paralelním voláním: „Kolik je 100 EUR, 100 GBP, 100 USD a 100 CHF v
 
 ## Implementované bonusy
 
-- **Automatické testy** (`pytest`, 35 testů bez internetu)
+- **Automatické testy** (`pytest`, 47 testů bez internetu)
+- **Rychlý filtr před LLM** (Jev přes OpenRouter, volitelný)
 - Validace dat přes **Pydantic**
 - **Logování** jednotlivých kroků do konzole
 - **Paralelní volání** nezávislých nástrojů
