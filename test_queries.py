@@ -8,6 +8,7 @@ The LLM is not deterministic, so each check only looks at WHICH tools were used,
 
 import sys
 
+from agent_logging import setup_logging
 from main import LLMError, run
 
 BROKEN_IMAGE = "https://example.com/this-image-does-not-exist.jpg"
@@ -50,6 +51,7 @@ TESTS = [
 
 
 def main() -> None:
+    setup_logging()
     selected = [TESTS[int(sys.argv[1]) - 1]] if len(sys.argv) > 1 else TESTS
     passed = 0
     for test in selected:

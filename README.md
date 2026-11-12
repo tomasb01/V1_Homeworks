@@ -16,6 +16,7 @@ Model si sám rozdělí práci: vyhledá nabídky, otevře stránku produktu, zk
 | `tools.py` | Implementace nástrojů, jejich validace a schémata pro LLM (oddělené od hlavní logiky) |
 | `tests/` | Automatické testy (`pytest`), běží bez internetu a bez klíčů |
 | `jev_filter.py` | Volitelný filtr: model Jev seřadí výsledky hledání podle požadavků (viz níže) |
+| `agent_logging.py` | Nastavení logování: stručný výpis do konzole a podrobný soubor `agent.log` |
 | `test_queries.py` | 5 ukázkových dotazů proti skutečnému LLM, s kontrolou, které nástroje se použily |
 | `try_tool.py` | Pomocný skript: zavolá jeden nástroj ručně, bez LLM |
 | `check_connection.py` | Pomocný skript: ověří, že klíč `OPENAI_API_KEY` funguje |
@@ -76,7 +77,21 @@ Uživatel ─► LLM ──► potřebuje nástroj? ── ne ─► finální o
 4. Výsledky se vrátí LLM. Ten může požádat o další nástroje (kola na sebe navazují) nebo odpovědět.
 5. Smyčka má limit 10 kol, aby se nezacyklila.
 
-Každý krok se vypisuje do konzole (`[step N] -> nástroj(argumenty)` a `[step N] <- výsledek`).
+## Logování
+
+Aplikace loguje přes modul `logging` (loggery `agent.main`, `agent.tools`, `agent.jev`) na dvě místa:
+
+- **Konzole:** stručný průběh. Každé kolo vypíše `[step N] ... tool call(s) in parallel`, `[step N] -> nástroj(argumenty)` a `[step N] <- výsledek` (zkrácené na 150 a 200 znaků). Navíc se tu ukážou varování z Jev filtru, např. že se nepodařilo ohodnotit výsledek.
+- **Soubor `agent.log`** (vedle kódu, rotuje po 1 MB, drží se 3 starší verze): vše podrobně, s časem, úrovní, názvem loggeru a **vláknem**, takže je vidět souběžné spouštění nástrojů. Obsahuje:
+  - dotaz uživatele a finální odpověď,
+  - délku každého volání LLM a počet vstupních a výstupních tokenů,
+  - argumenty každého nástroje, jeho trvání a **úplný** výsledek (do konzole se zkracuje),
+  - skóre Jev u každého výsledku hledání (`match`, `contradicts`, `not_confirmed`),
+  - chyby jako `WARNING`: selhání nástroje a selhání volání OpenAI.
+
+Soubor `agent.log` je v `.gitignore`, protože může obsahovat dotazy a výsledky hledání. API klíče se nelogují. Při ladění stačí otevřít `agent.log` a podívat se, co přesně LLM žádal a co nástroje vrátily, například při dotazu, na kterém se LLM zacyklí.
+
+Samotné moduly nic nenastavují při importu, logování se zapne jen voláním `setup_logging()` ve `main.py` a `test_queries.py`. Automatické testy tedy žádný soubor nevytvářejí.
 
 ## Nástroje
 
@@ -111,10 +126,12 @@ Omezení: Jev posuzuje jen krátký úryvek a nevidí celou stránku. Na jemné 
 
 ## Automatické testy
 
-`uv run pytest` spustí 47 testů za zlomek sekundy. Nepotřebují internet ani API klíče, protože HTTP volání i OpenAI jsou nahrazené falešnými.
+`uv run pytest` spustí 55 testů za zlomek sekundy. Nepotřebují internet ani API klíče, protože HTTP volání i OpenAI jsou nahrazené falešnými.
 
 - **`tests/test_tools.py`** (nástroje): validace argumentů, chybové stavy (neplatný JSON, neznámý nástroj, chybějící klíč, 404, výpadek sítě), zkracování výstupu a tvar schémat pro LLM.
 - **`tests/test_main.py`** (smyčka): odpověď bez nástroje, návrat výsledku nástroje do LLM, chyba nástroje, **souběžné** spuštění více nástrojů se zachováním `tool_call_id`, na sebe navazující kola, vynucená odpověď v posledním kole a převod chyb OpenAI na srozumitelné hlášky. LLM zde nahrazuje předem připravený scénář odpovědí.
+- **`tests/test_jev_filter.py`** (filtr Jev): řazení a výpočet skóre, rozlišení „popřeno“ a „neuvedeno“, ořez na nejlepší výsledky, tvar dotazu na Jev, výsledek bez hodnocení se řadí na konec a návrat k původnímu pořadí, když Jev selže úplně.
+- **`tests/test_logging.py`** (logování): co jde na konzoli a co do souboru, nezdvojování řádků při opakovaném nastavení, logování chyb nástrojů a Jev jako varování a logování kroků, plných výsledků, tokenů a finální odpovědi.
 
 Pro kontrolu jsem do kódu úmyslně zanesl tři chyby (nástroje po jednom místo souběžně, poslední kolo nevypne nástroje, odstraněná validace částky) a každou chytil právě ten test, který ji má hlídat.
 
@@ -145,7 +162,8 @@ Dotaz s paralelním voláním: „Kolik je 100 EUR, 100 GBP, 100 USD a 100 CHF v
 
 ## Implementované bonusy
 
-- **Automatické testy** (`pytest`, 47 testů bez internetu)
+- **Automatické testy** (`pytest`, 55 testů bez internetu)
+- **Logování** (modul `logging`: konzole + rotující soubor `agent.log`)
 - **Rychlý filtr před LLM** (Jev přes OpenRouter, volitelný)
 - Validace dat přes **Pydantic**
 - **Logování** jednotlivých kroků do konzole

@@ -1,6 +1,10 @@
 # Secrets: real API keys live only here, never in the repository
 .env
 
+# Log files (may contain search queries and tool results)
+*.log
+*.log.*
+
 # Python / uv
 .venv/
 __pycache__/

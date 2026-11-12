@@ -10,10 +10,13 @@ not the same as contradicting it, so "not mentioned" is its own answer and is no
 The filter is optional: without OPENROUTER_API_KEY, or when Jev fails, results stay unranked.
 """
 
+import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
+
+log = logging.getLogger("agent.jev")
 
 JEV_URL = os.environ.get("JEV_URL", "https://openrouter.ai/api/alpha/decisions")
 JEV_MODEL = os.environ.get("JEV_MODEL", "typesafe/jev-1.13")
@@ -58,7 +61,8 @@ def _rate(result: dict, requirements: list[str]) -> list[dict]:
 def _try_rate(result: dict, requirements: list[str]) -> list[dict] | None:
     try:
         return _rate(result, requirements)
-    except Exception:  # one failed rating must not break the search
+    except Exception as e:  # one failed rating must not break the search, but it must not go unnoticed either
+        log.warning("Jev could not rate '%s': %s: %s", result["title"][:60], type(e).__name__, e)
         return None
 
 
@@ -73,6 +77,7 @@ def rank_results(results: list[dict], requirements: list[str], top_n: int) -> li
         ratings = list(pool.map(lambda r: _try_rate(r, requirements), results))
 
     if all(rating is None for rating in ratings):
+        log.warning("Jev could not rate any of the %d results, keeping the original order", len(results))
         return results[:top_n]
 
     rated, unrated = [], []
@@ -89,4 +94,10 @@ def rank_results(results: list[dict], requirements: list[str], top_n: int) -> li
                 "not_confirmed": [req for req, p in zip(requirements, rating) if p.get("not_mentioned", 0) >= FLAG_AT],
             }
         )
-    return (sorted(rated, key=lambda r: r["match"], reverse=True) + unrated)[:top_n]
+    ranking = sorted(rated, key=lambda r: r["match"], reverse=True) + unrated
+    for position, r in enumerate(ranking, start=1):
+        log.debug(
+            "Jev #%d match=%s contradicts=%s not_confirmed=%s | %s",
+            position, r.get("match", "n/a"), r.get("contradicts"), r.get("not_confirmed"), r["title"][:70],
+        )
+    return ranking[:top_n]

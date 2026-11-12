@@ -1,7 +1,9 @@
 """Tool implementations and their schemas. The main app only calls execute_tool()."""
 
 import json
+import logging
 import os
+import time
 from typing import Annotated
 
 import requests
@@ -9,6 +11,8 @@ from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 import jev_filter
+
+log = logging.getLogger("agent.tools")
 
 
 # ---------- convert_currency ----------
@@ -246,7 +250,19 @@ TOOL_SCHEMAS = [
 
 
 def execute_tool(name: str, raw_arguments: str) -> dict:
-    """Parse, validate and run a tool. Never raises: errors come back as {"error": ...}."""
+    """Parse, validate and run a tool, and log how it went. Never raises: errors come back as {"error": ...}."""
+    started = time.perf_counter()
+    log.debug("%s called with %s", name, raw_arguments)
+    result = _execute(name, raw_arguments)
+    elapsed = time.perf_counter() - started
+    if "error" in result:
+        log.warning("%s failed after %.2fs: %s", name, elapsed, result["error"])
+    else:
+        log.debug("%s succeeded in %.2fs", name, elapsed)
+    return result
+
+
+def _execute(name: str, raw_arguments: str) -> dict:
     if name not in _TOOLS:
         return {"error": f"Unknown tool '{name}'. Available: {', '.join(_TOOLS)}"}
     _, model, func = _TOOLS[name]
