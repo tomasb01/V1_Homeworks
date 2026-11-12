@@ -126,6 +126,23 @@ def test_consecutive_rounds_build_on_each_other(monkeypatch):
     assert len(tool_messages(llm.requests[2])) == 2  # the last request carries both results
 
 
+def test_earlier_messages_are_resent_unchanged(monkeypatch):
+    """The history only grows at the end, so the provider's prompt cache keeps working at every step."""
+    llm = ScriptedLLM(
+        reply(tool_calls=[tool_call("c1", "web_search", {})]),
+        reply(tool_calls=[tool_call("c2", "read_page", {})]),
+        reply("hotovo"),
+    )
+    monkeypatch.setattr(main, "ask_llm", llm)
+    monkeypatch.setattr(main, "execute_tool", lambda name, args: {"content": "x" * 3000})
+
+    main.run("dotaz")
+
+    first, second, third = (request["messages"] for request in llm.requests)
+    assert second[: len(first)] == first
+    assert third[: len(second)] == second  # nothing before the new messages was rewritten
+
+
 def test_last_step_switches_tools_off_and_forces_an_answer(monkeypatch):
     monkeypatch.setattr(main, "MAX_STEPS", 3)
     requests_seen = []

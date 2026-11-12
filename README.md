@@ -77,6 +77,14 @@ Uživatel ─► LLM ──► potřebuje nástroj? ── ne ─► finální o
 4. Výsledky se vrátí LLM. Ten může požádat o další nástroje (kola na sebe navazují) nebo odpovědět.
 5. Smyčka má limit 10 kol, aby se nezacyklila.
 
+## Tokeny a náklady
+
+LLM dostává při každém kroku **celou historii**, takže výsledek nástroje se platí znovu při každém dalším kroku. Proto mají nástroje pevné limity (konstanty na začátku `tools.py`): `web_search` vrací nejvýš 5 výsledků s úryvkem 300 znaků a 3 odkazy na obrázky, `read_page` 3 000 znaků textu a 3 obrázky. Při měření na dotazu 4 (údaje z `agent.log`) klesla velikost výsledku hledání z asi 5 700 na 2 100 až 3 800 znaků a vstup LLM byl při stejném kroku o 15 až 45 % menší.
+
+Zkusil jsem také nahrazovat staré výsledky hledání krátkým výtahem a **nechal jsem to být**. OpenAI posílá už odeslanou část dotazu z cache (v logu je vidět, kolik tokenů z cache přišlo, třeba 5 723 z 5 816), jenže cache platí jen do prvního změněného místa. Přepsání staré zprávy ji v daném kroku zahodilo (z cache přišlo jen 1 065 tokenů místo asi 2 500) a ušetřilo jen asi 450 tokenů na krok, které se navíc posílají z cache. Zhuštění tedy vycházelo ve ztrátě. Historie se proto jen přidává na konec a dříve odeslané zprávy se nepřepisují (hlídá to test).
+
+Počet kroků, a tím i celkové tokeny, se mezi běhy liší víc než všechna tato opatření. Dva měřené běhy měly 5 a 7 volání LLM.
+
 ## Logování
 
 Aplikace loguje přes modul `logging` (loggery `agent.main`, `agent.tools`, `agent.jev`) na dvě místa:
@@ -97,7 +105,7 @@ Samotné moduly nic nenastavují při importu, logování se zapne jen voláním
 
 | Nástroj | Co dělá | Argumenty | Externí služba |
 |:--|:--|:--|:--|
-| `web_search` | Hledání na webu, vrací výsledky (název, URL, úryvek) a URL obrázků | `query`, volitelně `country`, `max_results` (1–10), `requirements` (viz Jev filtr) | Tavily Search, volitelně Jev přes OpenRouter |
+| `web_search` | Hledání na webu, vrací výsledky (název, URL, úryvek) a URL obrázků | `query`, volitelně `country`, `max_results` (1–5), `requirements` (viz Jev filtr) | Tavily Search, volitelně Jev přes OpenRouter |
 | `read_page` | Otevře stránku a vrátí jen části relevantní k dotazu (např. cenu konkrétní varianty) a obrázky ze stránky | `url`, `query` | Tavily Extract |
 | `check_image` | Pošle obrázek z URL vision modelu a odpoví na otázku o něm (např. barva produktu) | `image_url`, `question` | OpenAI (vision) |
 | `convert_currency` | Převod částky podle aktuálního kurzu | `amount` (> 0), `from_currency`, `to_currency` | Frankfurter (kurzy ECB, bez klíče) |
@@ -126,7 +134,7 @@ Omezení: Jev posuzuje jen krátký úryvek a nevidí celou stránku. Na jemné 
 
 ## Automatické testy
 
-`uv run pytest` spustí 55 testů za zlomek sekundy. Nepotřebují internet ani API klíče, protože HTTP volání i OpenAI jsou nahrazené falešnými.
+`uv run pytest` spustí 56 testů za zlomek sekundy. Nepotřebují internet ani API klíče, protože HTTP volání i OpenAI jsou nahrazené falešnými.
 
 - **`tests/test_tools.py`** (nástroje): validace argumentů, chybové stavy (neplatný JSON, neznámý nástroj, chybějící klíč, 404, výpadek sítě), zkracování výstupu a tvar schémat pro LLM.
 - **`tests/test_main.py`** (smyčka): odpověď bez nástroje, návrat výsledku nástroje do LLM, chyba nástroje, **souběžné** spuštění více nástrojů se zachováním `tool_call_id`, na sebe navazující kola, vynucená odpověď v posledním kole a převod chyb OpenAI na srozumitelné hlášky. LLM zde nahrazuje předem připravený scénář odpovědí.
@@ -162,7 +170,7 @@ Dotaz s paralelním voláním: „Kolik je 100 EUR, 100 GBP, 100 USD a 100 CHF v
 
 ## Implementované bonusy
 
-- **Automatické testy** (`pytest`, 55 testů bez internetu)
+- **Automatické testy** (`pytest`, 56 testů bez internetu)
 - **Logování** (modul `logging`: konzole + rotující soubor `agent.log`)
 - **Rychlý filtr před LLM** (Jev přes OpenRouter, volitelný)
 - Validace dat přes **Pydantic**

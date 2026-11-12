@@ -108,13 +108,17 @@ def run(user_query: str) -> tuple[str, list[dict]]:
         llm_started = time.perf_counter()
         response = ask_llm(messages, tool_choice=tool_choice)
         usage = getattr(response, "usage", None)
+        cached = getattr(getattr(usage, "prompt_tokens_details", None), "cached_tokens", "?")
         log.debug(
-            "[step %d] LLM call took %.1fs (tool_choice=%s, tokens in/out: %s/%s)",
+            "[step %d] LLM call took %.1fs (tool_choice=%s, history %d chars; "
+            "tokens in/out: %s/%s, %s of the input cached)",
             step,
             time.perf_counter() - llm_started,
             tool_choice,
+            len(json.dumps(messages, ensure_ascii=False)),
             getattr(usage, "prompt_tokens", "?"),
             getattr(usage, "completion_tokens", "?"),
+            cached,
         )
         message = response.choices[0].message
 

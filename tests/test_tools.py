@@ -141,8 +141,8 @@ def test_web_search_shapes_the_result(monkeypatch):
 
     assert sent["headers"] == {"Authorization": "Bearer secret"}
     assert sent["payload"]["country"] == "germany"  # normalized to lower case
-    assert len(result["results"][0]["content"]) == 500  # snippet is shortened
-    assert result["images"] == [f"https://img.example/{i}.jpg" for i in range(5)]  # only 5 plain URLs
+    assert len(result["results"][0]["content"]) == tools.SNIPPET_CHARS  # snippet is shortened
+    assert result["images"] == [f"https://img.example/{i}.jpg" for i in range(tools.MAX_IMAGES)]  # a few plain URLs
 
 
 REQUIREMENTS = ["The product is black", "The offer is for new goods"]
@@ -226,8 +226,8 @@ def test_read_page_limits_content_and_images(monkeypatch):
         tools.requests, "post", lambda *a, **k: FakeResponse(body={"results": [page], "failed_results": []})
     )
     result = call("read_page", url="https://shop.example/p", query="price of the black variant")
-    assert len(result["content"]) == 6000
-    assert len(result["images"]) == 5
+    assert len(result["content"]) == tools.PAGE_CHARS
+    assert len(result["images"]) == tools.MAX_IMAGES
 
 
 def test_read_page_reports_pages_that_cannot_be_read(monkeypatch):

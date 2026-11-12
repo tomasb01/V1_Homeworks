@@ -14,6 +14,12 @@ import jev_filter
 
 log = logging.getLogger("agent.tools")
 
+# Every tool result is sent to the LLM again at every later step, so these limits keep the history small.
+MAX_SEARCH_RESULTS = 5  # results returned by web_search
+SNIPPET_CHARS = 300  # length of the text snippet of one search result
+PAGE_CHARS = 3000  # length of the page text returned by read_page
+MAX_IMAGES = 3  # image URLs returned by web_search and read_page
+
 
 # ---------- convert_currency ----------
 
@@ -69,7 +75,9 @@ class WebSearchArgs(BaseModel):
         default=None,
         description="Optional: boost results from this country. Lowercase English name, e.g. 'germany', 'united kingdom'.",
     )
-    max_results: int = Field(default=5, ge=1, le=10, description="How many results to return (1-10).")
+    max_results: int = Field(
+        default=5, ge=1, le=MAX_SEARCH_RESULTS, description=f"How many results to return (1-{MAX_SEARCH_RESULTS})."
+    )
     requirements: list[Annotated[str, Field(min_length=3, max_length=150)]] | None = Field(
         default=None,
         max_length=6,
@@ -109,10 +117,10 @@ def web_search(args: WebSearchArgs) -> dict:
     body = response.json()
 
     # Only the URLs go back to the LLM; check_image looks at the actual image.
-    images = [img["url"] if isinstance(img, dict) else img for img in body.get("images", [])[:5]]
+    images = [img["url"] if isinstance(img, dict) else img for img in body.get("images", [])[:MAX_IMAGES]]
 
     results = [
-        {"title": r["title"], "url": r["url"], "content": r["content"][:500]}  # keep token usage small
+        {"title": r["title"], "url": r["url"], "content": r["content"][:SNIPPET_CHARS]}
         for r in body.get("results", [])
     ]
     if use_jev:
@@ -170,8 +178,8 @@ def read_page(args: ReadPageArgs) -> dict:
     page = body["results"][0]
     return {
         "url": args.url,
-        "content": page["raw_content"][:6000],  # keep token usage small
-        "images": page.get("images", [])[:5],
+        "content": page["raw_content"][:PAGE_CHARS],
+        "images": page.get("images", [])[:MAX_IMAGES],
     }
 
 
